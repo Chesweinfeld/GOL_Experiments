@@ -2,17 +2,9 @@
 """
 Evolution search for Life patterns.
 
-Each round:
-• Evaluate `round_size` patterns.
-• Keep top `keepers` elites.
-• Mutate each elite (flip `mut_flips` cells) and refill to `round_size`.
-• Optionally save & tile the top N patterns of the final round.
-
-Run example:
-    python3 new_evolve.py --round_size 32 --keepers 16 --mut_flips 4 \
-                          --rounds 6 --steps 400 --show_n 20 --tile_margin 6
-Replay:
-    python3 myGOL.py --pattern winner.npy
+By default this script saves only the final champion as `winner.npy`.
+Optionally, you can tile the top N final-round patterns into a single board
+and save that board to a file you specify with --tile_output.
 """
 
 import argparse, numpy as np, multiprocessing as mp
@@ -66,26 +58,29 @@ def fitness(seed: np.ndarray, board_size: int, steps: int,
 
     return repro + survival + growth
 
-##############################################################################
-# Tiling utility
-##############################################################################
 
-def tile_patterns(patterns, margin=4):
-    if not patterns: raise ValueError("no patterns")
+def tile_patterns(patterns, margin: int = 4) -> np.ndarray:
+    """
+    Return a large board containing all `patterns` tiled in a square grid
+    with `margin` dead-cell spacing. Assumes all patterns share the same shape.
+    """
+    if not patterns:
+        raise ValueError("No patterns to tile.")
     pr, pc = patterns[0].shape
     n = len(patterns)
     cols = int(np.ceil(np.sqrt(n)))
-    rows = int(np.ceil(n/cols))
-    H = rows*pr + (rows-1)*margin
-    W = cols*pc + (cols-1)*margin
-    board = np.zeros((H, W), dtype=bool)
-    k=0
+    rows = int(np.ceil(n / cols))
+    height = rows * pr + (rows - 1) * margin
+    width  = cols * pc + (cols - 1) * margin
+    board = np.zeros((height, width), dtype=bool)
+    k = 0
     for r in range(rows):
         for c in range(cols):
-            if k>=n: break
-            top  = r*(pr+margin)
-            left = c*(pc+margin)
-            board[top:top+pr, left:left+pc] = patterns[k]
+            if k >= n:
+                break
+            top  = r * (pr + margin)
+            left = c * (pc + margin)
+            board[top:top + pr, left:left + pc] = patterns[k]
             k += 1
     return board
 
@@ -116,8 +111,6 @@ def evolve(a):
 
         top_idx=np.argsort(scores)[-K:]
         elites=[pop[i] for i in top_idx]
-        for r,p in enumerate(elites,1):
-            np.save(f"round{round_no:02d}_elite{r:02d}.npy",p)
 
         mutants=[mutate(e,a.mut_flips,rng) for e in elites]
         new_pop=elites+mutants
@@ -133,11 +126,14 @@ def evolve(a):
     np.save("winner.npy",champ)
     print(f"\n🏆 Champion saved to winner.npy  (score {max(finals):.2f})")
 
-    if a.show_n>0:
-        idx=np.argsort(finals)[::-1][:a.show_n]
-        board=tile_patterns([pop[i] for i in idx], margin=a.tile_margin)
-        np.save("show.npy",board)
-        print(f"Top {a.show_n} tiled → show.npy")
+    # Optional: save a tiled board of top patterns
+    if a.tile_output and a.tile_n > 0:
+        sorted_idx = np.argsort(finals)[::-1][:a.tile_n]
+        patterns_to_tile = [pop[i] for i in sorted_idx]
+        tiled = tile_patterns(patterns_to_tile, margin=a.tile_margin)
+        np.save(a.tile_output, tiled)
+        print(f"Tiled top {a.tile_n} patterns → {a.tile_output}")
+
 
 ##############################################################################
 # CLI
@@ -154,9 +150,12 @@ def get_args():
     ap.add_argument("--copy_tol",   type=int, default=10)
     ap.add_argument("--sustain_extra", type=int, default=100)
     ap.add_argument("--workers",    type=int, default=mp.cpu_count())
-    ap.add_argument("--show_n",     type=int, default=0,
-                    help="Tile top N patterns into show.npy (0=skip)")
-    ap.add_argument("--tile_margin", type=int, default=4)
+    ap.add_argument("--tile_output", type=str, default="",
+                    help="Path to save a tiled board of top patterns (optional).")
+    ap.add_argument("--tile_n", type=int, default=0,
+                    help="How many top patterns to tile (0 = skip).")
+    ap.add_argument("--tile_margin", type=int, default=4,
+                    help="Dead-cell spacing between tiled patterns.")
     return ap.parse_args()
 
 if __name__ == "__main__":
